@@ -1,2 +1,2 @@
-/model
+/model/*.pth
 /deeplab/__pycache__
