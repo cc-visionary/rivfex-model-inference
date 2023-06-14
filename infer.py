@@ -331,9 +331,9 @@ def delete():
 
             try:
                 s3_client.delete_object(
-                    Bucket="rivfex-original", Key=flask.request.args['filename'])
+                    Bucket=os.getenv("BUCKET"), Key="original/" + flask.request.args['filename'])
                 s3_client.delete_object(
-                    Bucket="rivfex-segmented", Key=flask.request.args['filename'])
+                    Bucket=os.getenv("BUCKET"), Key="segmented/" + flask.request.args['filename'])
             except Exception as e:
                 return flask.jsonify({"success": False, "message": repr(e)})
 
@@ -369,8 +369,8 @@ def predict():
                     # move to beginning of file so `send_file()` it will read from start
                     result_file.seek(0)
 
-                    s3_client.Bucket("rivfex-segmented").put_object(
-                        Key=flask.request.files['image'].filename, Body=result_file, ContentType='image/jpeg')
+                    s3_client.Bucket(os.getenv("BUCKET")).put_object(
+                        Key="segmented/" + flask.request.files['image'].filename, Body=result_file, ContentType='image/jpeg')
                 except Exception as e:
                     return flask.jsonify({"success": False, "message": repr(e)})
 
@@ -387,8 +387,8 @@ def predict():
                     # move to beginning of file so `send_file()` it will read from start
                     result_file.seek(0)
 
-                    s3_client.Bucket("rivfex-original").put_object(
-                        Key=flask.request.files['image'].filename, Body=result_file, ContentType='image/jpeg')
+                    s3_client.Bucket(os.getenv("BUCKET")).put_object(
+                        Key="original/" + flask.request.files['image'].filename, Body=result_file, ContentType='image/jpeg')
                 except Exception as e:
                     return flask.jsonify({"success": False, "message": repr(e)})
 
