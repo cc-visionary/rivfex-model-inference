@@ -26,6 +26,7 @@ DEVICE = torch.device(
     'cuda') if torch.cuda.is_available() else torch.device('cpu')
 MODEL_PATH = "./model/3_fold_normalized.pth"
 
+
 def initalize():
     global model
     model = MSC(
@@ -42,6 +43,7 @@ def initalize():
     model.eval()
     model.to(DEVICE)
 
+
 def white_mask(image):
     r = np.zeros_like(image).astype(np.uint8)
     g = np.zeros_like(image).astype(np.uint8)
@@ -51,9 +53,11 @@ def white_mask(image):
 
     return mask
 
+
 def preprocessing(image):
     # Resize
-    image = cv2.resize(np.array(image), dsize=(640, 360), interpolation=cv2.INTER_LINEAR)
+    image = cv2.resize(np.array(image), dsize=(
+        640, 360), interpolation=cv2.INTER_LINEAR)
     raw_image = image.astype(np.uint8)
 
     # Subtract mean values
@@ -70,6 +74,7 @@ def preprocessing(image):
     image = torch.from_numpy(image.transpose(2, 0, 1)).float().unsqueeze(0)
 
     return image, raw_image
+
 
 _BATCH_NORM = nn.BatchNorm2d
 _BOTTLENECK_EXPANSION = 4
@@ -91,7 +96,8 @@ class _ConvBnReLU(nn.Sequential):
                 in_ch, out_ch, kernel_size, stride, padding, dilation, bias=False
             ),
         )
-        self.add_module("bn", _BATCH_NORM(out_ch, eps=1e-5, momentum=1 - 0.999))
+        self.add_module("bn", _BATCH_NORM(
+            out_ch, eps=1e-5, momentum=1 - 0.999))
 
         if relu:
             self.add_module("relu", nn.ReLU())
@@ -106,7 +112,8 @@ class _Bottleneck(nn.Module):
         super(_Bottleneck, self).__init__()
         mid_ch = out_ch // _BOTTLENECK_EXPANSION
         self.reduce = _ConvBnReLU(in_ch, mid_ch, 1, stride, 0, 1, True)
-        self.conv3x3 = _ConvBnReLU(mid_ch, mid_ch, 3, 1, dilation, dilation, True)
+        self.conv3x3 = _ConvBnReLU(
+            mid_ch, mid_ch, 3, 1, dilation, dilation, True)
         self.increase = _ConvBnReLU(mid_ch, out_ch, 1, 1, 0, 1, False)
         self.shortcut = (
             _ConvBnReLU(in_ch, out_ch, 1, stride, 0, 1, False)
@@ -120,6 +127,7 @@ class _Bottleneck(nn.Module):
         h = self.increase(h)
         h += self.shortcut(x)
         return F.relu(h)
+
 
 class _ResLayer(nn.Sequential):
     """
@@ -173,10 +181,12 @@ class ResNet(nn.Sequential):
         self.add_module("flatten", nn.Flatten())
         self.add_module("fc", nn.Linear(ch[5], n_classes))
 
+
 class MSC(nn.Module):
     """
     Multi-scale inputs
     """
+
     def __init__(self, base, scales=None):
         super(MSC, self).__init__()
         self.base = base
@@ -189,14 +199,16 @@ class MSC(nn.Module):
         # Original
         logits = self.base(x)
         _, _, H, W = logits.shape
-        interp = lambda l: F.interpolate(
+
+        def interp(l): return F.interpolate(
             l, size=(H, W), mode="bilinear", align_corners=False
         )
 
         # Scaled
         logits_pyramid = []
         for p in self.scales:
-            h = F.interpolate(x, scale_factor=p, mode="bilinear", align_corners=False)
+            h = F.interpolate(x, scale_factor=p,
+                              mode="bilinear", align_corners=False)
             logits_pyramid.append(self.base(h))
 
         # Pixel-wise max
@@ -208,6 +220,7 @@ class MSC(nn.Module):
         else:
             return logits_max
 
+
 class _ASPP(nn.Module):
     """
     Atrous spatial pyramid pooling (ASPP)
@@ -218,7 +231,8 @@ class _ASPP(nn.Module):
         for i, rate in enumerate(rates):
             self.add_module(
                 "c{}".format(i),
-                nn.Conv2d(in_ch, out_ch, 3, 1, padding=rate, dilation=rate, bias=True),
+                nn.Conv2d(in_ch, out_ch, 3, 1, padding=rate,
+                          dilation=rate, bias=True),
             )
 
         for m in self.children():
@@ -227,7 +241,8 @@ class _ASPP(nn.Module):
 
     def forward(self, x):
         return sum([stage(x) for stage in self.children()])
-    
+
+
 class DeepLabV2(nn.Sequential):
     """
     DeepLab v2: Dilated ResNet + ASPP
@@ -248,6 +263,7 @@ class DeepLabV2(nn.Sequential):
         for m in self.modules():
             if isinstance(m, _ConvBnReLU.BATCH_NORM):
                 m.eval()
+
 
 def segment_river(img):
     image, raw_image = preprocessing(img)
@@ -310,12 +326,14 @@ def threshold_hsv(raw_img):
 def delete():
     try:
         if flask.request.method == "DELETE":
-            s3_client = boto3.client("s3", aws_access_key_id="AKIAWIZJYQWT2GDAX74U",
-                                       aws_secret_access_key="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")
-            
+            s3_client = boto3.client("s3", aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                                     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"))
+
             try:
-                s3_client.delete_object(Bucket="rivfex-original", Key=flask.request.args['filename'])
-                s3_client.delete_object(Bucket="rivfex-segmented", Key=flask.request.args['filename'])
+                s3_client.delete_object(
+                    Bucket="rivfex-original", Key=flask.request.args['filename'])
+                s3_client.delete_object(
+                    Bucket="rivfex-segmented", Key=flask.request.args['filename'])
             except Exception as e:
                 return flask.jsonify({"success": False, "message": repr(e)})
 
