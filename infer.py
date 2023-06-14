@@ -17,8 +17,8 @@ import os
 
 load_dotenv()
 
-app = flask.Flask(__name__)
-CORS(app)
+application = flask.Flask(__name__)
+CORS(application)
 
 model = None
 CLASSES = {0: 'non-river', 1: 'river'}
@@ -321,7 +321,7 @@ def threshold_hsv(raw_img):
     return bboxes
 
 
-@app.route("/delete", methods=["DELETE"])
+@application.route("/delete", methods=["DELETE"])
 @cross_origin()
 def delete():
     try:
@@ -342,7 +342,7 @@ def delete():
         return flask.jsonify({"success": False, "message": repr(e)})
 
 
-@app.route("/infer", methods=["POST"])
+@application.route("/infer", methods=["POST"])
 @cross_origin()
 def predict():
     if flask.request.method == "POST":
@@ -407,4 +407,4 @@ if __name__ == "__main__":
     print("Loading inference server")
     print("Utilizing %s for computing" % DEVICE)
     initalize()
-    app.run(host='0.0.0.0', port='5000')
+    application.run(host='0.0.0.0', port='5000')
