@@ -9,3 +9,4 @@ flask
 flask-cors
 pillow
 boto3
+python-dotenv

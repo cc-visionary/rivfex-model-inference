@@ -1,2 +1,3 @@
 /model
 /deeplab/__pycache__
+.env

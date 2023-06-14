@@ -1,8 +1,8 @@
 from PIL import Image
 from scipy import ndimage
 from skimage.measure import label, regionprops
-from flask import send_file
 from flask_cors import CORS, cross_origin
+from dotenv import load_dotenv
 
 import cv2
 import numpy as np
@@ -11,21 +11,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import flask
-import os
 import io
-import urllib
 import boto3
+import os
+
+load_dotenv()
 
 app = flask.Flask(__name__)
 CORS(app)
 
 model = None
-# MODEL_DIR = os.getenv("MODEL_DIR")
 CLASSES = {0: 'non-river', 1: 'river'}
 DEVICE = torch.device(
     'cuda') if torch.cuda.is_available() else torch.device('cpu')
 MODEL_PATH = "./model/3_fold_normalized.pth"
-
 
 def initalize():
     global model
@@ -72,13 +71,7 @@ def preprocessing(image):
 
     return image, raw_image
 
-try:
-    from encoding.nn import SyncBatchNorm
-
-    _BATCH_NORM = SyncBatchNorm
-except:
-    _BATCH_NORM = nn.BatchNorm2d
-
+_BATCH_NORM = nn.BatchNorm2d
 _BOTTLENECK_EXPANSION = 4
 
 
@@ -342,8 +335,8 @@ def predict():
 
             if (type(result) == np.ndarray):
                 # Upload the file
-                s3_client = boto3.resource("s3", aws_access_key_id="AKIAWIZJYQWT2GDAX74U",
-                                           aws_secret_access_key="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")
+                s3_client = boto3.resource("s3", aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                                           aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"))
 
                 try:
                     # convert numpy array to PIL Image
