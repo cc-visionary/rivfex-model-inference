@@ -322,6 +322,7 @@ def threshold_hsv(raw_img):
 
 
 @application.route("/delete", methods=["DELETE"])
+@cross_origin
 def delete():
     try:
         if flask.request.method == "DELETE":
@@ -342,6 +343,7 @@ def delete():
 
 
 @application.route("/infer", methods=["POST"])
+@cross_origin
 def predict():
     if flask.request.method == "POST":
         try:
