@@ -56,7 +56,7 @@ def white_mask(image):
 
 def preprocessing(image):
     # Resize
-    image = cv2.resize(np.array(image), dsize=(
+    image = cv2.resize(image, dsize=(
         640, 360), interpolation=cv2.INTER_LINEAR)
     raw_image = image.astype(np.uint8)
 
@@ -265,9 +265,7 @@ class DeepLabV2(nn.Sequential):
                 m.eval()
 
 
-def segment_river(img):
-    image, raw_image = preprocessing(img)
-
+def segment_river(image, raw_image):
     _, _, H, W = image.shape
 
     # Image -> Probability map
@@ -284,14 +282,15 @@ def segment_river(img):
     labelmap = ndimage.binary_fill_holes(1 - labelmap).astype(int)
     labelmap = ndimage.binary_dilation(labelmap).astype(int)
 
+    total_river_pixels = cv2.countNonZero(labelmap)
     # check if image is a rivel
-    if (cv2.countNonZero(labelmap) > (H * W) / 2):
-        return None
+    if (total_river_pixels > (H * W) / 2):
+        return None, total_river_pixels
 
     w_mask = white_mask(labelmap)
     raw_image = cv2.addWeighted(raw_image, 1, w_mask, 1, 0)
 
-    return raw_image
+    return raw_image, total_river_pixels
 
 
 def threshold_hsv(raw_img):
@@ -312,13 +311,19 @@ def threshold_hsv(raw_img):
 
     labels = regionprops(label(morphOpen))
 
-    bboxes = []
+    bboxed_img = raw_img.copy()
+
+    total_obstructed_river_pixels = 0
     for i in labels:
         minr, minc, maxr, maxc = i.bbox
         if (maxr-minr > 5 and maxc-minc > 5):
-            bboxes.append([minc, minr, maxc, maxr])
+            cv2.rectangle(bboxed_img, (int(minc), int(
+                minr)), (int(maxc), int(maxr)), (255, 0, 0), 1)
+            total_obstructed_river_pixels += (
+                maxc - minc) * (maxr - minr)
 
-    return bboxes
+    # returns output and total obstructed river pixels
+    return bboxed_img, total_obstructed_river_pixels
 
 
 @application.route("/inference/delete", methods=["DELETE"])
@@ -330,10 +335,9 @@ def delete():
                                      aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"), region_name=os.getenv("REGION"))
 
             try:
-                s3_client.delete_object(
-                    Bucket=os.getenv("BUCKET"), Key="original/" + flask.request.args['filename'])
-                s3_client.delete_object(
-                    Bucket=os.getenv("BUCKET"), Key="segmented/" + flask.request.args['filename'])
+                for folder in ['original/', 'segmented/', 'bboxed/']:
+                    s3_client.delete_object(
+                        Bucket=os.getenv("BUCKET"), Key=folder + flask.request.args['filename'])
             except Exception as e:
                 return flask.jsonify({"success": False, "message": repr(e)})
 
@@ -347,56 +351,46 @@ def delete():
 def predict():
     if flask.request.method == "POST":
         try:
-            image = np.array(Image.open(flask.request.files['image']))
+            img = np.array(Image.open(flask.request.files['image']))
+            image, raw_image = preprocessing(img)
 
-            result = segment_river(image)
+            segmented, total_river_pixels = segment_river(image, raw_image)
 
-            if (type(result) == np.ndarray):
+            if (type(segmented) == np.ndarray):
                 # Upload the file
                 s3_client = boto3.resource("s3", aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
                                            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"), region_name=os.getenv("REGION")).Bucket(os.getenv("BUCKET"))
 
-                try:
-                    # convert numpy array to PIL Image
-                    result_img = Image.fromarray(result.astype('uint8'))
-
-                    # create file-object in memory
-                    result_file = io.BytesIO()
-
-                    # write PNG in file-object
-                    result_img.save(result_file, 'jpeg')
-
-                    # move to beginning of file so `send_file()` it will read from start
-                    result_file.seek(0)
-
-                    s3_client.put_object(
-                        Key="segmented/" + flask.request.files['image'].filename, Body=result_file, ContentType='image/jpeg')
-                except Exception as e:
-                    return flask.jsonify({"success": False, "message": repr(e)})
-
-                try:
-                    # convert numpy array to PIL Image
-                    result_img = Image.fromarray(image.astype('uint8'))
-
-                    # create file-object in memory
-                    result_file = io.BytesIO()
-
-                    # write PNG in file-object
-                    result_img.save(result_file, 'jpeg')
-
-                    # move to beginning of file so `send_file()` it will read from start
-                    result_file.seek(0)
-
-                    s3_client.put_object(
-                        Key="original/" + flask.request.files['image'].filename, Body=result_file, ContentType='image/jpeg')
-                except Exception as e:
-                    return flask.jsonify({"success": False, "message": repr(e)})
-
                 # image processing for surface object detection
-                bboxes = threshold_hsv(result)
+                bboxed_img, total_obstructed_river_pixels = threshold_hsv(
+                    segmented)
 
-                return flask.jsonify({"success": True, "message": "Segmented and Uploaded Successfully", "bboxes": bboxes})
-            return flask.jsonify({"success": False, "message": "River Mask is less than 50%% of the image"})
+                # upload images to AWS EC2
+                for folder, img in [('original', raw_image), ('segmented', segmented), ('bboxed', bboxed_img)]:
+                    try:
+                        # convert numpy array to PIL Image
+                        im = Image.fromarray(img.astype('uint8'))
+
+                        # create file-object in memory
+                        file = io.BytesIO()
+
+                        # write PNG in file-object
+                        im.save(file, 'jpeg')
+
+                        # move to beginning of file so `send_file()` it will read from start
+                        file.seek(0)
+
+                        s3_client.put_object(
+                            Key=("%s/" % (folder)) + flask.request.files['image'].filename, Body=file, ContentType='image/jpeg')
+                    except Exception as e:
+                        return flask.jsonify({"success": False, "message": repr(e)})
+
+                return flask.jsonify({
+                    "success": True,
+                    "message": "Segmented and Uploaded Successfully",
+                    "percentage_river_covered": (total_obstructed_river_pixels / total_river_pixels) * 100
+                })
+            return flask.jsonify({"success": False, "message": "Uploaded image might not be a river image... Detected segmented river area is less than 50% of the image... Please try again."})
         except Exception as e:
             return flask.jsonify({"success": False, "message": repr(e)})
 
