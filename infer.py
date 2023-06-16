@@ -18,7 +18,7 @@ import os
 load_dotenv()
 
 application = flask.Flask(__name__)
-CORS(application, resources={r"/*": {"origins": "*"}})
+CORS(application, resources={r"/*": {"origins": "https://localhost:8000"}})
 
 model = None
 CLASSES = {0: 'non-river', 1: 'river'}
@@ -322,7 +322,7 @@ def threshold_hsv(raw_img):
 
 
 @application.route("/delete", methods=["DELETE"])
-@cross_origin
+@cross_origin()
 def delete():
     try:
         if flask.request.method == "DELETE":
@@ -343,7 +343,7 @@ def delete():
 
 
 @application.route("/infer", methods=["POST"])
-@cross_origin
+@cross_origin()
 def predict():
     if flask.request.method == "POST":
         try:
