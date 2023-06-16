@@ -327,7 +327,7 @@ def delete():
     try:
         if flask.request.method == "DELETE":
             s3_client = boto3.client("s3", aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-                                     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"))
+                                     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"), region_name=os.getenv("REGION"))
 
             try:
                 s3_client.delete_object(
@@ -354,7 +354,7 @@ def predict():
             if (type(result) == np.ndarray):
                 # Upload the file
                 s3_client = boto3.resource("s3", aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-                                           aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"))
+                                           aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"), region_name=os.getenv("REGION")).Bucket(os.getenv("BUCKET"))
 
                 try:
                     # convert numpy array to PIL Image
@@ -369,7 +369,7 @@ def predict():
                     # move to beginning of file so `send_file()` it will read from start
                     result_file.seek(0)
 
-                    s3_client.Bucket(os.getenv("BUCKET")).put_object(
+                    s3_client.put_object(
                         Key="segmented/" + flask.request.files['image'].filename, Body=result_file, ContentType='image/jpeg')
                 except Exception as e:
                     return flask.jsonify({"success": False, "message": repr(e)})
@@ -387,7 +387,7 @@ def predict():
                     # move to beginning of file so `send_file()` it will read from start
                     result_file.seek(0)
 
-                    s3_client.Bucket(os.getenv("BUCKET")).put_object(
+                    s3_client.put_object(
                         Key="original/" + flask.request.files['image'].filename, Body=result_file, ContentType='image/jpeg')
                 except Exception as e:
                     return flask.jsonify({"success": False, "message": repr(e)})
