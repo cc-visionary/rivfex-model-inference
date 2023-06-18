@@ -282,10 +282,10 @@ def segment_river(image, raw_image):
     labelmap = ndimage.binary_fill_holes(1 - labelmap).astype(int)
     labelmap = ndimage.binary_dilation(labelmap).astype(int)
 
-    total_river_pixels = cv2.countNonZero(labelmap)
-    # check if image is a rivel
-    if (total_river_pixels > (H * W) / 2):
-        return None, total_river_pixels
+    total_river_pixels = (H * W) - cv2.countNonZero(labelmap)
+    # check if image is a river (river pixel > 50% of the image)
+    if (total_river_pixels < (H * W) * 0.5):
+        return None, None
 
     w_mask = white_mask(labelmap)
     raw_image = cv2.addWeighted(raw_image, 1, w_mask, 1, 0)
@@ -293,8 +293,8 @@ def segment_river(image, raw_image):
     return raw_image, total_river_pixels
 
 
-def threshold_hsv(raw_img):
-    hsv_img = cv2.cvtColor(raw_img, cv2.COLOR_BGR2HSV)
+def threshold_hsv(segmented, raw_img):
+    hsv_img = cv2.cvtColor(segmented, cv2.COLOR_BGR2HSV)
 
     mask = cv2.inRange(hsv_img, np.array(
         [50, 60, 65]), np.array([85, 120, 165]))
@@ -363,7 +363,7 @@ def predict():
 
                 # image processing for surface object detection
                 bboxed_img, total_obstructed_river_pixels = threshold_hsv(
-                    segmented)
+                    segmented, raw_image)
 
                 # upload images to AWS EC2
                 for folder, img in [('original', raw_image), ('segmented', segmented), ('bboxed', bboxed_img)]:
@@ -390,7 +390,7 @@ def predict():
                     "message": "Segmented and Uploaded Successfully",
                     "percentage_river_covered": (total_obstructed_river_pixels / total_river_pixels) * 100
                 })
-            return flask.jsonify({"success": False, "message": "Uploaded image might not be a river image... Detected segmented river area is less than 50% of the image... Please try again."})
+            return flask.jsonify({"success": False, "message": "Detected segmented river area is less than 50% of the image...<br />Possible Causes:<br />1. Uploaded image might not be a river image<br />2. River is covered by something else.<br />Please try again..."})
         except Exception as e:
             return flask.jsonify({"success": False, "message": repr(e)})
 
