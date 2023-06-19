@@ -24,7 +24,7 @@ model = None
 CLASSES = {0: 'non-river', 1: 'river'}
 DEVICE = torch.device(
     'cuda') if torch.cuda.is_available() else torch.device('cpu')
-MODEL_PATH = "./model/3_fold_normalized.pth"
+MODEL_PATH = "./model/fine_tune_whole.pth"
 
 
 def initalize():
