@@ -3,6 +3,7 @@ from scipy import ndimage
 from skimage.measure import label, regionprops
 from flask_cors import CORS, cross_origin
 from dotenv import load_dotenv
+from torchvision.ops import box_iou
 
 import cv2
 import numpy as np
@@ -283,8 +284,8 @@ def segment_river(image, raw_image):
     labelmap = ndimage.binary_dilation(labelmap).astype(int)
 
     total_river_pixels = (H * W) - cv2.countNonZero(labelmap)
-    # check if image is a river (river pixel > 50% of the image)
-    if (total_river_pixels < (H * W) * 0.5):
+    # check if image is a river (river pixel > 40% of the image)
+    if (total_river_pixels < (H * W) * 0.40):
         return None, None
 
     w_mask = white_mask(labelmap)
@@ -313,14 +314,38 @@ def threshold_hsv(segmented, raw_img):
 
     bboxed_img = raw_img.copy()
 
+    bboxes = []
     total_obstructed_river_pixels = 0
     for i in labels:
         minr, minc, maxr, maxc = i.bbox
         if (maxr-minr > 5 and maxc-minc > 5):
-            cv2.rectangle(bboxed_img, (int(minc), int(
-                minr)), (int(maxc), int(maxr)), (255, 0, 0), 1)
-            total_obstructed_river_pixels += (
-                maxc - minc) * (maxr - minr)
+            bboxes.append([minc, minr, maxc, maxr])
+
+    bboxes = torch.Tensor(bboxes)
+
+    # remove box within boxes
+    if (len(bboxes) > 0):
+        pairwise = box_iou(bboxes, bboxes).numpy()
+        xs, ys = np.where((pairwise == pairwise) & (
+            pairwise != 0) & (pairwise != 1))
+        to_be_removed = []
+        for x, y in zip(xs, ys):
+            if ((bboxes[x][2] - bboxes[x][0]) * (bboxes[x][3] - bboxes[x][1]) > (bboxes[y][2] - bboxes[y][0]) * (bboxes[y][3] - bboxes[y][1])):
+                if (y not in to_be_removed):
+                    to_be_removed.append(y)
+            else:
+                if (x not in to_be_removed):
+                    to_be_removed.append(x)
+
+        indices = list(np.arange(len(bboxes)))
+        for index in to_be_removed:
+            indices.remove(index)
+
+        bboxes = bboxes[indices]
+
+    for minc, minr, maxc, maxr in bboxes:
+        cv2.rectangle(bboxed_img, (int(minc), int(minr)), (int(maxc), int(maxr)), (255, 0, 0), 1)
+        total_obstructed_river_pixels += (maxc - minc) * (maxr - minr)
 
     # returns output and total obstructed river pixels
     return bboxed_img, total_obstructed_river_pixels
@@ -384,11 +409,10 @@ def predict():
                             Key=("%s/" % (folder)) + flask.request.files['image'].filename, Body=file, ContentType='image/jpeg')
                     except Exception as e:
                         return flask.jsonify({"success": False, "message": repr(e)})
-
                 return flask.jsonify({
                     "success": True,
                     "message": "Segmented and Uploaded Successfully",
-                    "percentage_river_covered": (total_obstructed_river_pixels / total_river_pixels) * 100
+                    "percentage_river_covered": min((float(total_obstructed_river_pixels) / float(total_river_pixels)) * 100, 100)
                 })
             return flask.jsonify({"success": False, "message": "Detected segmented river area is less than 50% of the image...<br />Possible Causes:<br />1. Uploaded image might not be a river image<br />2. River is covered by something else.<br />Please try again..."})
         except Exception as e:
