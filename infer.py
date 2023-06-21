@@ -298,7 +298,7 @@ def threshold_hsv(segmented, raw_img):
     hsv_img = cv2.cvtColor(segmented, cv2.COLOR_BGR2HSV)
 
     mask = cv2.inRange(hsv_img, np.array(
-        [50, 60, 65]), np.array([85, 120, 165]))
+        [60, 100, 0]), np.array([90, 150, 160]))
 
     # Noise removal using Morphological open operation
     kernel = np.ones((3, 3), np.uint8)
