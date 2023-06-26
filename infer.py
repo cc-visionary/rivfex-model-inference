@@ -27,6 +27,9 @@ DEVICE = torch.device(
     'cuda') if torch.cuda.is_available() else torch.device('cpu')
 MODEL_PATH = "./model/fine_tune_whole.pth"
 
+source_points = np.array([[180, 100], [460, 100], [120, 260], [520, 260]], dtype=np.float32)
+destination_points = np.array([[220, 150], [420, 150], [220, 310], [420, 310]], dtype=np.float32)
+M = cv2.getPerspectiveTransform(source_points, destination_points)
 
 def initalize():
     global model
@@ -286,15 +289,17 @@ def segment_river(image, raw_image):
     total_river_pixels = (H * W) - cv2.countNonZero(labelmap)
     # check if image is a river (river pixel > 40% of the image)
     if (total_river_pixels < (H * W) * 0.40):
-        return None, None
+        return None, None, None
 
     w_mask = white_mask(labelmap)
     raw_image = cv2.addWeighted(raw_image, 1, w_mask, 1, 0)
 
-    return raw_image, total_river_pixels
+    return raw_image, labelmap - 1
 
-
-def threshold_hsv(segmented, raw_img):
+# performs image processing techniques
+# remove small bounding boxes inside of bigger boxes
+# then performs perspective transformation on the image
+def threshold_hsv(segmented, raw_img, river_mask):
     hsv_img = cv2.cvtColor(segmented, cv2.COLOR_BGR2HSV)
 
     mask = cv2.inRange(hsv_img, np.array(
@@ -315,7 +320,6 @@ def threshold_hsv(segmented, raw_img):
     bboxed_img = raw_img.copy()
 
     bboxes = []
-    total_obstructed_river_pixels = 0
     for i in labels:
         minr, minc, maxr, maxc = i.bbox
         if (maxr-minr > 5 and maxc-minc > 5):
@@ -343,12 +347,27 @@ def threshold_hsv(segmented, raw_img):
 
         bboxes = bboxes[indices]
 
-    for minc, minr, maxc, maxr in bboxes:
-        cv2.rectangle(bboxed_img, (int(minc), int(minr)), (int(maxc), int(maxr)), (255, 0, 0), 1)
-        total_obstructed_river_pixels += (maxc - minc) * (maxr - minr)
+    # warp river mask
+    warped_river = cv2.warpPerspective(river_mask.astype('uint8'), M, (640, 360), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    transformed_river_area = cv2.countNonZero(warped_river)
 
-    # returns output and total obstructed river pixels
-    return bboxed_img, total_obstructed_river_pixels
+    # get warped, perspective transorm
+    warped = cv2.warpPerspective(raw_img, M, (640, 360), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+    total_obstructed_river_pixels = 0
+    total_transformed_obstructed_river_pixels = 0
+    for minc, minr, maxc, maxr in bboxes:
+        total_obstructed_river_pixels += (maxc - minc) * (maxr - minr)
+    
+        custom_box = np.array([[[minc, minr]], [[maxc, minr]], [[minc, maxr]], [[maxc, maxr]]])
+        warped_box = cv2.perspectiveTransform(custom_box, M)
+        total_transformed_obstructed_river_pixels += (warped_box[3][0][0] - warped_box[0][0][0]) * (warped_box[3][0][1] - warped_box[0][0][1])
+
+        cv2.rectangle(bboxed_img, (int(minc), int(minr)), (int(maxc), int(maxr)), (255, 0, 0), 1)
+        cv2.rectangle(warped, (int(warped_box[0][0][0]), int(warped_box[0][0][1])), (int(warped_box[3][0][0]), int(warped_box[3][0][1])), (255, 0, 0), 1)
+        
+    # returns bboxed image, warped bbox image, actual river covered, transformed river covered
+    return bboxed_img, warped, min(total_obstructed_river_pixels / cv2.countNonZero(river_mask) * 100, 100), min(total_transformed_obstructed_river_pixels / transformed_river_area * 100, 100)
 
 
 @application.route("/inference/delete", methods=["DELETE"])
@@ -360,7 +379,7 @@ def delete():
                                      aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"), region_name=os.getenv("REGION"))
 
             try:
-                for folder in ['original/', 'segmented/', 'bboxed/']:
+                for folder in ['original/', 'segmented/', 'bboxed/', 'transformed/']:
                     s3_client.delete_object(
                         Bucket=os.getenv("BUCKET"), Key=folder + flask.request.args['filename'])
             except Exception as e:
@@ -379,7 +398,7 @@ def predict():
             img = np.array(Image.open(flask.request.files['image']))
             image, raw_image = preprocessing(img)
 
-            segmented, total_river_pixels = segment_river(image, raw_image)
+            segmented, river_mask = segment_river(image, raw_image)
 
             if (type(segmented) == np.ndarray):
                 # Upload the file
@@ -387,11 +406,11 @@ def predict():
                                            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"), region_name=os.getenv("REGION")).Bucket(os.getenv("BUCKET"))
 
                 # image processing for surface object detection
-                bboxed_img, total_obstructed_river_pixels = threshold_hsv(
-                    segmented, raw_image)
+                bboxed_img, warped_img, actual_river_covered, transformed_river_covered = threshold_hsv(
+                    segmented, raw_image, river_mask)
 
                 # upload images to AWS EC2
-                for folder, img in [('original', raw_image), ('segmented', segmented), ('bboxed', bboxed_img)]:
+                for folder, img in [('original', raw_image), ('segmented', segmented), ('bboxed', bboxed_img), ('transformed', warped_img)]:
                     try:
                         # convert numpy array to PIL Image
                         im = Image.fromarray(img.astype('uint8'))
@@ -412,7 +431,8 @@ def predict():
                 return flask.jsonify({
                     "success": True,
                     "message": "Segmented and Uploaded Successfully",
-                    "percentage_river_covered": min((float(total_obstructed_river_pixels) / float(total_river_pixels)) * 100, 100)
+                    "actual_percentage_river_covered": float(actual_river_covered),
+                    "transformed_percentage_river_covered": float(transformed_river_covered),
                 })
             return flask.jsonify({"success": False, "message": "Detected segmented river area is less than 50% of the image...<br />Possible Causes:<br />1. Uploaded image might not be a river image<br />2. River is covered by something else.<br />Please try again..."})
         except Exception as e:
