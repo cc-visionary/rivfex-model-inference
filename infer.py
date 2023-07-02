@@ -289,7 +289,7 @@ def segment_river(image, raw_image):
     total_river_pixels = (H * W) - cv2.countNonZero(labelmap)
     # check if image is a river (river pixel > 40% of the image)
     if (total_river_pixels < (H * W) * 0.40):
-        return None, None, None
+        return None, None
 
     w_mask = white_mask(labelmap)
     raw_image = cv2.addWeighted(raw_image, 1, w_mask, 1, 0)
