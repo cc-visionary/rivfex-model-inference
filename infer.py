@@ -27,8 +27,8 @@ DEVICE = torch.device(
     'cuda') if torch.cuda.is_available() else torch.device('cpu')
 MODEL_PATH = "./model/fine_tune_whole.pth"
 
-source_points = np.array([[180, 100], [460, 100], [120, 260], [520, 260]], dtype=np.float32)
-destination_points = np.array([[220, 150], [420, 150], [220, 310], [420, 310]], dtype=np.float32)
+source_points = np.array([[210, 100], [430, 100], [120, 260], [520, 260]], dtype=np.float32)
+destination_points = np.array([[520, 400], [720, 400], [520, 560], [720, 560]], dtype=np.float32)
 M = cv2.getPerspectiveTransform(source_points, destination_points)
 
 def initalize():
@@ -268,7 +268,18 @@ class DeepLabV2(nn.Sequential):
             if isinstance(m, _ConvBnReLU.BATCH_NORM):
                 m.eval()
 
+# ================ Create Overlay Mask ====================
+def create_overlay(mask):
+    r = np.zeros_like(mask).astype(np.uint8)
+    g = np.zeros_like(mask).astype(np.uint8)
+    b = np.zeros_like(mask).astype(np.uint8)
+    r[mask == 1], g[mask == 1], b[mask == 1] = [0, 255, 0]
+    
+    overlay = np.stack([r, g, b], axis=2)
+    
+    return overlay
 
+# ================ Segment River ====================
 def segment_river(image, raw_image):
     _, _, H, W = image.shape
 
@@ -289,86 +300,80 @@ def segment_river(image, raw_image):
     total_river_pixels = (H * W) - cv2.countNonZero(labelmap)
     # check if image is a river (river pixel > 40% of the image)
     if (total_river_pixels < (H * W) * 0.40):
-        return None, None
+        return [], []
 
     w_mask = white_mask(labelmap)
     raw_image = cv2.addWeighted(raw_image, 1, w_mask, 1, 0)
-
-    return raw_image, labelmap - 1
-
-# performs image processing techniques
-# remove small bounding boxes inside of bigger boxes
-# then performs perspective transformation on the image
-def threshold_hsv(segmented, raw_img, river_mask):
-    hsv_img = cv2.cvtColor(segmented, cv2.COLOR_BGR2HSV)
-
-    mask = cv2.inRange(hsv_img, np.array(
-        [60, 100, 0]), np.array([90, 150, 160]))
-
-    # Noise removal using Morphological open operation
-    kernel = np.ones((3, 3), np.uint8)
-    morphOpen = cv2.dilate(mask, kernel, iterations=2)
-    kernel = np.ones((3, 3), np.uint8)
-    morphOpen = cv2.dilate(morphOpen, kernel, iterations=1)
-    morphClose = cv2.morphologyEx(
-        morphOpen, cv2.MORPH_CLOSE, kernel, iterations=1)
-    morphOpen = cv2.morphologyEx(
-        morphClose, cv2.MORPH_OPEN, kernel, iterations=1)
-
-    labels = regionprops(label(morphOpen))
-
-    bboxed_img = raw_img.copy()
-
-    bboxes = []
-    for i in labels:
-        minr, minc, maxr, maxc = i.bbox
-        if (maxr-minr > 5 and maxc-minc > 5):
-            bboxes.append([minc, minr, maxc, maxr])
-
-    bboxes = torch.Tensor(bboxes)
-
-    # remove box within boxes
-    if (len(bboxes) > 0):
-        pairwise = box_iou(bboxes, bboxes).numpy()
-        xs, ys = np.where((pairwise == pairwise) & (
-            pairwise != 0) & (pairwise != 1))
-        to_be_removed = []
-        for x, y in zip(xs, ys):
-            if ((bboxes[x][2] - bboxes[x][0]) * (bboxes[x][3] - bboxes[x][1]) > (bboxes[y][2] - bboxes[y][0]) * (bboxes[y][3] - bboxes[y][1])):
-                if (y not in to_be_removed):
-                    to_be_removed.append(y)
-            else:
-                if (x not in to_be_removed):
-                    to_be_removed.append(x)
-
-        indices = list(np.arange(len(bboxes)))
-        for index in to_be_removed:
-            indices.remove(index)
-
-        bboxes = bboxes[indices]
-
-    # warp river mask
-    warped_river = cv2.warpPerspective(river_mask.astype('uint8'), M, (640, 360), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    transformed_river_area = cv2.countNonZero(warped_river)
-
-    # get warped, perspective transorm
-    warped = cv2.warpPerspective(raw_img, M, (640, 360), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-
-    total_obstructed_river_pixels = 0
-    total_transformed_obstructed_river_pixels = 0
-    for minc, minr, maxc, maxr in bboxes:
-        total_obstructed_river_pixels += (maxc - minc) * (maxr - minr)
     
-        custom_box = np.array([[[minc, minr]], [[maxc, minr]], [[minc, maxr]], [[maxc, maxr]]])
-        warped_box = cv2.perspectiveTransform(custom_box, M)
-        total_transformed_obstructed_river_pixels += (warped_box[3][0][0] - warped_box[0][0][0]) * (warped_box[3][0][1] - warped_box[0][0][1])
+    labelmap = ndimage.binary_fill_holes(labelmap - 1)
 
-        cv2.rectangle(bboxed_img, (int(minc), int(minr)), (int(maxc), int(maxr)), (255, 0, 0), 1)
-        cv2.rectangle(warped, (int(warped_box[0][0][0]), int(warped_box[0][0][1])), (int(warped_box[3][0][0]), int(warped_box[3][0][1])), (255, 0, 0), 1)
+    return raw_image, labelmap.astype('uint8')
+
+# performs image processing techniques,
+# adds polygons to detected regions,
+# then performs perspective transformation on the image
+# ================ Locate Objects ====================
+def locate_objects(img, raw_img):
+    segmented, river_mask = segment_river(img, raw_img)
+    if(type(segmented) == np.ndarray):
+        hsv_img = cv2.cvtColor(segmented, cv2.COLOR_BGR2HSV)
+
+        mask = cv2.inRange(hsv_img, np.array(
+            [50, 100, 0]), np.array([90, 150, 160]))
+
+        # Noise removal using Morphological open operation
+        kernel = np.ones((3, 3), np.uint8)
+        dilate = cv2.dilate(mask, kernel, iterations=4)
+        erode = cv2.erode(dilate, kernel, iterations=1)
+        morphClose = cv2.morphologyEx(erode, cv2.MORPH_CLOSE, kernel, iterations=1)
+        morphOpen = cv2.morphologyEx(morphClose, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        labels = regionprops(label(morphOpen))
+
+        detected_img = raw_img.copy()
+        detected_mask = np.zeros((360, 640))
+
+        small_coords = []
+        total_small_area = 0
+        medium_large_coords = []
+        total_medium_large_area = 0
+        for l in labels:
+            coords = np.array([[[b, a] for a, b in l.coords]])
+            if(l.area <= 32 * 32):
+                total_small_area += l.area
+                small_coords.append(coords[0])
+            else: # if area > 32*32
+                cv2.drawContours(detected_mask, coords, 0, 1, 1)
+                medium_large_coords.append(coords[0])
+
+        # warp detected
+        warped_mask = cv2.warpPerspective(detected_mask, M, (1240, 610), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        warped_img = cv2.warpPerspective(detected_img, M, (1240, 610), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)    
+        total_warped_medium_large_area = cv2.countNonZero(warped_mask)
+            
+        # warp river mask
+        warped_river = cv2.warpPerspective(river_mask.astype('uint8'), M, (1240, 610), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        transformed_river_area = cv2.countNonZero(warped_river)
+
+        # only label the small areas if total area > 32 * 32
+        if(total_small_area > 32 * 32):
+            cv2.drawContours(detected_mask, small_coords, -1, 1, 1)
+            for coords in small_coords:
+                warped_coords = cv2.perspectiveTransform(np.array([coords], dtype=np.float32), M)
+                cv2.drawContours(warped_mask, warped_coords.astype(int), -1, 1, 1)
+
+        detected_img = cv2.addWeighted(detected_img, 1, create_overlay(detected_mask), 0.25, 0)
+        warped_img = cv2.addWeighted(warped_img, 1, create_overlay(warped_mask), 0.25, 0)
         
-    # returns bboxed image, warped bbox image, actual river covered, transformed river covered
-    return bboxed_img, warped, min(total_obstructed_river_pixels / cv2.countNonZero(river_mask) * 100, 100), min(total_transformed_obstructed_river_pixels / transformed_river_area * 100, 100)
+        total_area = cv2.countNonZero(detected_mask)
+        transformed_total_area = cv2.countNonZero(warped_mask)
+        river_covered = min(total_area / cv2.countNonZero(river_mask) * 100, 100)
+        transformed_river_covered = min(transformed_total_area / transformed_river_area * 100, 100)
 
+        # returns bboxed image, warped bbox image, actual river covered, transformed river covered
+        return segmented, detected_img, warped_img, river_covered, transformed_river_covered
+    else:
+        return None, None, None, None, None
 
 @application.route("/inference/delete", methods=["DELETE"])
 @cross_origin()
@@ -398,19 +403,16 @@ def predict():
             img = np.array(Image.open(flask.request.files['image']))
             image, raw_image = preprocessing(img)
 
-            segmented, river_mask = segment_river(image, raw_image)
+            # locate_objects while retrieving river covered
+            segmented, detected_img, warped_img, actual_river_covered, transformed_river_covered = locate_objects(image, raw_image)
 
-            if (type(segmented) == np.ndarray):
+            if (type(detected_img) == np.ndarray):
                 # Upload the file
                 s3_client = boto3.resource("s3", aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
                                            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"), region_name=os.getenv("REGION")).Bucket(os.getenv("BUCKET"))
 
-                # image processing for surface object detection
-                bboxed_img, warped_img, actual_river_covered, transformed_river_covered = threshold_hsv(
-                    segmented, raw_image, river_mask)
-
                 # upload images to AWS EC2
-                for folder, img in [('original', raw_image), ('segmented', segmented), ('bboxed', bboxed_img), ('transformed', warped_img)]:
+                for folder, img in [('original', raw_image), ('segmented', segmented), ('detected', detected_img), ('transformed', warped_img)]:
                     try:
                         # convert numpy array to PIL Image
                         im = Image.fromarray(img.astype('uint8'))
