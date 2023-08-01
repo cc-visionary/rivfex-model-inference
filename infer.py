@@ -60,8 +60,8 @@ def white_mask(image):
 
 def preprocessing(image):
     # Resize
-    image = cv2.resize(image, dsize=(
-        640, 360), interpolation=cv2.INTER_LINEAR)
+    # image = cv2.resize(image, dsize=(
+    #     640, 360), interpolation=cv2.INTER_LINEAR)
     raw_image = image.astype(np.uint8)
 
     # Subtract mean values
@@ -319,14 +319,13 @@ def locate_objects(img, raw_img):
         hsv_img = cv2.cvtColor(segmented, cv2.COLOR_BGR2HSV)
 
         mask = cv2.inRange(hsv_img, np.array(
-            [50, 100, 0]), np.array([90, 150, 160]))
+            [50, 100, 40]), np.array([90, 150, 160]))
 
         # Noise removal using Morphological open operation
         kernel = np.ones((3, 3), np.uint8)
-        dilate = cv2.dilate(mask, kernel, iterations=4)
-        erode = cv2.erode(dilate, kernel, iterations=1)
-        morphClose = cv2.morphologyEx(erode, cv2.MORPH_CLOSE, kernel, iterations=1)
-        morphOpen = cv2.morphologyEx(morphClose, cv2.MORPH_OPEN, kernel, iterations=1)
+        dilate = cv2.dilate(mask, kernel, iterations=2)
+        # morphClose = cv2.morphologyEx(dilate, cv2.MORPH_CLOSE, kernel, iterations=1)
+        morphOpen = cv2.morphologyEx(dilate, cv2.MORPH_OPEN, kernel, iterations=1)
 
         labels = regionprops(label(morphOpen))
 
@@ -400,7 +399,8 @@ def delete():
 def predict():
     if flask.request.method == "POST":
         try:
-            img = np.array(Image.open(flask.request.files['image']))
+            img = Image.open(flask.request.files['image']).convert("RGB")
+            img = np.array(img)
             image, raw_image = preprocessing(img)
 
             # locate_objects while retrieving river covered
