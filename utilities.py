@@ -6,7 +6,6 @@ import sys
 import cv2
 import numpy as np
 
-from shapely import geometry
 from scipy import ndimage
 from skimage.measure import label, regionprops
 
