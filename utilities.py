@@ -109,7 +109,7 @@ Load the YoLo v7 model from the trained weights
 def load_yolov7(device):
     model = Ensemble()
 
-    weight = torch.load('./model/yolo7.pt',
+    weight = torch.load('./model/yolov7.pt',
                         map_location=device)  # load FP32 model
     model.append(weight['ema' if weight.get('ema')
                  else 'model'].float().fuse().eval())
