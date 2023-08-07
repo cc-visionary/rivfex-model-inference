@@ -9,13 +9,13 @@ import numpy as np
 from scipy import ndimage
 from skimage.measure import label, regionprops
 
-sys.path.insert(0, "./yolov7")
+sys.path.insert(1, "./yolov7")
 from models.experimental import Ensemble
 from models.common import Conv
 from utils.datasets import letterbox
 from utils.general import check_img_size, non_max_suppression, scale_coords
 
-sys.path.insert(0, "./deeplab")
+sys.path.insert(1, "./deeplab")
 from deeplabv2 import DeepLabV2
 from msc import MSC
 
