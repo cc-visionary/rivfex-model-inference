@@ -9,15 +9,15 @@ import numpy as np
 from scipy import ndimage
 from skimage.measure import label, regionprops
 
-sys.path.insert(1, "./yolov7")
-from models.experimental import Ensemble
-from models.common import Conv
-from utils.datasets import letterbox
-from utils.general import check_img_size, non_max_suppression, scale_coords
+sys.path.insert(0, "./yolov7")
+from yolov7.models.experimental import Ensemble
+from yolov7.models.common import Conv
+from yolov7.utils.datasets import letterbox
+from yolov7.utils.general import check_img_size, non_max_suppression, scale_coords
 
-sys.path.insert(1, "./deeplab")
-from deeplabv2 import DeepLabV2
-from msc import MSC
+sys.path.insert(0, "./deeplab")
+from deeplab.deeplabv2 import DeepLabV2
+from deeplab.msc import MSC
 
 # ================== General Utilities ==================
 """
