@@ -95,7 +95,7 @@ def delete():
                                      aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"), region_name=os.getenv("REGION"))
 
             try:
-                for folder in ['original/', 'segmented/', 'bboxed/', 'transformed/']:
+                for folder in ['original/', 'segmented/', 'detected/', 'transformed/']:
                     s3_client.delete_object(
                         Bucket=os.getenv("BUCKET"), Key=folder + flask.request.args['filename'])
             except Exception as e:
