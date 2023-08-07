@@ -10,3 +10,6 @@ flask-cors
 pillow
 boto3
 python-dotenv
+pillow
+scipy
+scikit-image
